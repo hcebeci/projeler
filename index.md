@@ -1,5 +1,10 @@
 ## Welcome to GitHub Pages
-Our Project html file : [project](https://hcebeci.github.io/projeler/Project-3-Final.html)
+Image Defect Detection html file : [project](https://hcebeci.github.io/projeler/Project-3-Final.html)
+
+
+
+
+
 
 
 Whenever you commit to this repository, GitHub Pages will run [Jekyll](https://jekyllrb.com/) to rebuild the pages in your site, from the content in your Markdown files.
