@@ -1,0 +1,750 @@
+
+# IE 423: QUALITY ENGINEERING
+
+**Project Part 2**
+
+**11.12.2023**
+
+**INTRODUCTION**
+
+Project Part 2 explores the application of control charts in pairs
+trading, focusing on the hourly time series data of BIST30 stock
+indices. In the report highly correlated stock pairs are identified by
+using a correlation threshold, realtionship between correlated stocks
+are modeled through linear regression, and control charts applied to
+monitor residuals for potential trading opportunities.
+
+```{r}
+#install.packages('tidyverse','lmtest','TTR','caret')
+library(tidyverse)
+library(lmtest) # For linear regression
+library(TTR) # For time-series analysis
+library(caret)
+
+# Set the directory where your CSV files are located
+data_folder <- "~/Downloads/20180101_20231121_bist30/"
+# List all CSV files in the directory
+csv_files <- list.files(data_folder, pattern = "*.csv", full.names = TRUE)
+
+# Read and combine all CSV files into a single data frame
+combined_data <- lapply(csv_files, read.csv) %>%
+  reduce(bind_rows)
+
+# Assuming your combined_data has columns: timestamp, stock_identifier, stock_price
+# Pivot the data to have each stock in its own column
+reshaped_data <- combined_data %>%
+  pivot_wider(names_from = short_name, values_from = price)
+head(reshaped_data)
+```
+
+In order to identify highly correlated stocks, correlation threshold is
+determined as 0.99 and the correlation between each pair of data in
+BIST30 is checked.
+
+```{r}
+# Calculate correlation matrix for the stocks
+correlation_matrix <- cor(reshaped_data[, -1])  # Exclude timestamp column
+
+
+# Set correlation threshold
+correlation_threshold <- 0.99  # Adjust this threshold as needed
+
+# Get the indices where correlation is above the threshold, excluding self-correlations
+highly_correlated_pairs <- which(correlation_matrix > correlation_threshold & correlation_matrix < 1, arr.ind = TRUE)
+
+# Create an empty list to store selected pairs
+selected_pairs <- list()
+
+
+# Loop through the correlated pairs to select unique pairs
+for (i in 1:nrow(highly_correlated_pairs)) {
+  pair <- highly_correlated_pairs[i, ]
+  stock1 <- rownames(correlation_matrix)[pair[1]]
+  stock2 <- colnames(correlation_matrix)[pair[2]]
+  
+  # Check if the pair or its reversed version is already selected
+  if (!(stock1 %in% unlist(selected_pairs) | stock2 %in% unlist(selected_pairs))) {
+    selected_pairs[[length(selected_pairs) + 1]] <- c(stock1, stock2)
+  }
+}
+
+# Print the selected pairs
+selected_pairs
+ 
+```
+
+"GARAN" "AKBNK" is the only pairs that correlation between exceed the
+correlation threshold. To select 2 stock pairs, threshold is decreased
+to 0.98
+
+```{r}
+# Set correlation threshold to different level because we need two pairs
+correlation_threshold <- 0.98  # Adjust this threshold as needed
+
+# Get the indices where correlation is above the threshold, excluding self-correlations
+highly_correlated_pairs <- which(correlation_matrix > correlation_threshold & correlation_matrix < 1, arr.ind = TRUE)
+
+# Create an empty list to store selected pairs
+selected_pairs <- list()
+
+# Loop through the correlated pairs to select unique pairs
+for (i in 1:nrow(highly_correlated_pairs)) {
+  pair <- highly_correlated_pairs[i, ]
+  stock1 <- rownames(correlation_matrix)[pair[1]]
+  stock2 <- colnames(correlation_matrix)[pair[2]]
+  
+  # Check if the pair or its reversed version is already selected
+  if (!(stock1 %in% unlist(selected_pairs) | stock2 %in% unlist(selected_pairs))) {
+    selected_pairs[[length(selected_pairs) + 1]] <- c(stock1, stock2)
+  }
+}
+
+# Print the selected pairs
+selected_pairs
+```
+
+As a result of updated threshold value, 5 different stock pairs exceed
+the threshold value and can be used as highly correlated stock pairs for
+our analysis.
+
+"KCHOL" "THYAO" and "GARAN" "AKBNK" pairs are selected among 5 pairs.
+
+**Part 1**
+
+In the first part of the project, linear regression modeling is applied
+to these highly correlated stock pairs to understand their relationship.
+Residuals are calculated under the assumption of constant variance.
+Control limits are set, and plots of residuals with control limits are
+generated for each pair, aiding in the visualization of deviations from
+expected relationships.
+
+Firstly, pair of "KCHOL" or "THYAO" are examined:
+
+```{r}
+
+head(reshaped_data)
+head(reshaped_data$AKBNK)
+# Set a seed for reproducibility
+set.seed(123)
+
+# Set the proportion for training data
+train_proportion <- 0.8
+
+# Calculate the index for splitting
+split_index <- floor(nrow(reshaped_data) * train_proportion)
+
+# Split the data into training (80%) and testing (20%) sets
+# Create training and test sets
+train_data <- reshaped_data[1:split_index, ]
+
+test_data <- reshaped_data[(split_index + 1):nrow(reshaped_data), ]
+
+
+head(train_data$timestamp)
+head(test_data$timestamp)
+
+
+# Perform linear regression on the selected pair
+lm_model_1 <- lm(KCHOL ~ THYAO, data = train_data)
+
+# Get residuals from the linear regression model
+residuals_1 <- residuals(lm_model_1)
+
+# Calculate standard deviation of residuals
+residuals_sd_1 <- sd(residuals_1)
+
+# Calculate upper and lower control limits (e.g., 3 standard deviations from mean)
+upper_limit <- mean(residuals_1) + 3 * residuals_sd_1
+lower_limit <- mean(residuals_1) - 3 * residuals_sd_1
+
+# changing format of timestamp from ‘character’ to “POSIXct" "POSIXt" to plot the residuals.
+new_format_timestamp = as.POSIXct(reshaped_data$timestamp, format = "%Y-%m-%d %H:%M:%S")
+
+# Create a data frame for plotting
+plot_data <- data.frame(timestamp = new_format_timestamp[1:split_index], residuals = residuals_1)
+
+# Create a ggplot
+ggplot(plot_data, aes(x = timestamp, y = residuals)) +
+  geom_line() +
+  labs(x = "Timestamp", y = "Residuals", title = "Residuals Plot with Control Limits") +
+  geom_hline(yintercept = c(upper_limit, lower_limit), linetype = "dashed", color = c("red", "blue")) +
+  scale_x_datetime(date_breaks = "1 month", date_labels = "%b %Y") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  annotate("text", x = as.POSIXct(max(plot_data$timestamp)), y = upper_limit, label = "Upper Limit", hjust = 1.1, color = "red") +
+  annotate("text", x = as.POSIXct(max(plot_data$timestamp)), y = lower_limit, label = "Lower Limit", hjust = 1.1, color = "blue") +
+  theme(legend.position = "bottom") +
+  guides(col = guide_legend(title = "Control Limits"))
+
+
+```
+
+First, data is seperated for training and test sets. Upper and lower control limits determined using the training set, which are going to be used on test set.
+
+```{r}
+
+# Predict the response variable for the test data using the trained linear regression model
+test_predictions_1 <- predict(lm_model_1, newdata = test_data)
+
+# Get residuals for the test data
+test_residuals_1 <- test_data$KCHOL - test_predictions_1
+
+# Create a data frame for plotting
+plot_data <- data.frame(timestamp = new_format_timestamp[(split_index + 1):nrow(reshaped_data)], residuals = test_residuals_1)
+
+# Plotting the residuals for the test data with control limits
+# Create a ggplot
+ggplot(plot_data, aes(x = timestamp, y = residuals)) +
+  geom_line() +
+  labs(x = "Timestamp", y = "Residuals", title = "Residuals Plot with Control Limits") +
+  geom_hline(yintercept = c(upper_limit, lower_limit), linetype = "dashed", color = c("red", "blue")) +
+  scale_x_datetime(date_breaks = "1 month", date_labels = "%b %Y") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  annotate("text", x = as.POSIXct(max(plot_data$timestamp)), y = upper_limit, label = "Upper Limit", hjust = 1.1, color = "red") +
+  annotate("text", x = as.POSIXct(max(plot_data$timestamp)), y = lower_limit, label = "Lower Limit", hjust = 1.1, color = "blue") +
+  theme(legend.position = "bottom") +
+  guides(col = guide_legend(title = "Control Limits"))
+
+```
+By monitoring residuals through control chart, it can be seen that there
+are residuals that move beyond the control limits. For the HCHOL \~
+THYAO pair, according to the control chart, there are residuals exceed
+upper control limit between: Oct 2022-Apr 2023, Jun 2023-Oct2023 and lastly Nov 2023-Dec2023
+
+In pairs trading with control charts, residuals beyond control limits
+signify a potential trading opportunity.
+
+The interpretation of residuals exceeding the control limit as follows:
+
+**Residuals exceeding the upper control limit** suggest that the actual
+relationship between the paired stocks deviates significantly from the
+expected relationship based on historical data. This could imply that
+one stock is outperforming the other beyond what is statistically
+expected. In pairs trading, this may trigger a signal to sell the
+outperforming stock (short position) and buy the underperforming stock
+(long position). The expectation is that the relationship will revert to
+its historical mean.
+
+**Residuals falling below the lower control limit** indicate a potential
+opportunity where one stock is underperforming more than expected
+relative to the other. In response, a pairs trader might initiate a long
+position in the underperforming stock and a short position in the
+outperforming stock, anticipating a reversion to the mean relationship.
+
+A trading simulation is set up based on the control chart signals and
+quantify the potential gains over a specified period, using a
+predetermined amount of trading capital which is "1000000". Moreover
+shares to trade is pre-determined which is the amount of stock will be
+traded according to the relative performance of the paired securities.
+For each time period, the action of either "SELL KCHOL/BUY THYAO" or
+"BUY KHCOL/SELL THYAO" or "HOLD Both" are determined according to the
+residuals position in control chart. At the end of all these trading
+decisions, the change in initial capital can be observed.
+
+```{r}
+# Define initial trading capital
+initial_capital <- 1000000  
+
+# Define the amount of shares to buy or sell based on the trading signal
+shares_to_trade <- 1  # You can adjust this value
+
+# Create an empty list to store trade information
+trade_list <- list()
+
+# Function to execute trades based on control chart signals
+execute_trades <- function(timestamp1, stock1, stock2, residuals, upper_limit, lower_limit) {
+  trade_info <- NULL  # Define trade_info within the function
+  if (residuals > upper_limit) {
+    # Sell stock1 and buy stock2
+    action <- "SELL/BUY"
+    capital_change <- (stock1 - stock2) * shares_to_trade
+  } else if (residuals < lower_limit) {
+    # Buy stock1 and sell stock2
+    action <- "BUY/SELL"
+    capital_change <- -(stock1 - stock2) * shares_to_trade
+  } else {
+    # No trade
+    action <- "HOLD"
+    capital_change <- 0
+  }
+  # Update trade_info
+  initial_capital <<- initial_capital + capital_change
+  trade_info <- list(timestamp1, stock1, stock2, action, capital_change)
+  # Store trade information in the list
+  trade_list[[length(trade_list) + 1]] <<- trade_info
+}
+
+# Apply trading simulation for the first pair
+for (i in 1:length(test_residuals_1)) {
+  execute_trades(test_data$timestamp, test_data$KCHOL[i], test_data$THYAO[i], test_residuals_1[i], upper_limit, lower_limit)
+}
+
+# Create the data frame from the list
+trades_df1 <- as.data.frame(do.call(rbind, trade_list))
+colnames(trades_df1) <- c("Timestamp", "KCHOL", "THYAO", "Action", "CapitalChange")
+trades_df1 <- subset(trades_df1, Action != "HOLD")
+final_capital_1 <- initial_capital
+final_capital_1
+```
+
+In the output, the points exceeding the control limits coincide with the
+intervals that we visually indicate as residuals using the Control chart
+graphs. The initial capital of 1000000 becomes 1124038 as a result of
+Pairs Trading Strategy.
+
+Secondly, pair of "GARAN" or "AKBNK" are examined:
+
+```{r}
+
+#For second pair (GARAN and AKBNK)
+
+# Assuming 'combined_data' is your dataset with columns for timestamp, stock_identifier, and stock_price
+
+# Check if values for "GARAN" or "AKBNK" are missing for each timestamp
+missing_data_either <- combined_data %>%
+  filter(short_name %in% c("GARAN", "AKBNK")) %>%
+  group_by(timestamp) %>%
+  summarise(missing_count = sum(is.na(price)))
+
+# Filter timestamps where either "KCHOL" or "THYAO" has missing values
+timestamps_either_missing <- missing_data_either %>%
+  filter(missing_count > 0) %>%
+  pull(timestamp)
+
+# Print timestamps where either "GARAN" or "AKBNK" has missing values
+if (length(timestamps_either_missing) > 0) {
+  cat("Timestamps where either 'GARAN' or 'AKBNK' has missing values:\n")
+  print(timestamps_either_missing)
+} else {
+  cat("There are no timestamps where either 'GARAN' or 'AKBNK' has missing values.\n")
+}
+
+
+# Perform linear regression on the selected pair
+lm_model_2 <- lm(GARAN ~ AKBNK, data = train_data)
+
+# Get residuals from the linear regression model
+residuals_2 <- residuals(lm_model_2)
+
+
+# Calculate standard deviation of residuals
+residuals_sd_2 <- sd(residuals_2)
+
+# Calculate upper and lower control limits (e.g., 2 standard deviations from mean)
+upper_limit_2 <- mean(residuals_2) + 3 * residuals_sd_2
+lower_limit_2 <- mean(residuals_2) - 3 * residuals_sd_2
+
+# Create a data frame for plotting
+plot_data_2 <- data.frame(timestamp = new_format_timestamp[1:split_index], residuals = residuals_2)
+
+# Create a ggplot
+ggplot(plot_data_2, aes(x = timestamp, y = residuals)) +
+  geom_line() +
+  labs(x = "Timestamp", y = "Residuals", title = "Residuals Plot with Control Limits") +
+  geom_hline(yintercept = c(upper_limit_2, lower_limit_2), linetype = "dashed", color = c("red", "blue")) +
+  scale_x_datetime(date_breaks = "1 month", date_labels = "%b %Y") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  annotate("text", x = as.POSIXct(max(plot_data_2$timestamp)), y = upper_limit, label = "Upper Limit", hjust = 1.1, color = "red") +
+  annotate("text", x = as.POSIXct(max(plot_data_2$timestamp)), y = lower_limit, label = "Lower Limit", hjust = 1.1, color = "blue") +
+  theme(legend.position = "bottom") +
+  guides(col = guide_legend(title = "Control Limits"))
+
+```
+
+First, data is seperated for training and test sets. Upper and lower control limits determined using the training set, which are going to be used on test set.
+
+The same procedure is followed to implement the pairs trading strategy
+
+```{r}
+
+# Predict the response variable for the test data using the trained linear regression model
+test_predictions_2 <- predict(lm_model_2, newdata = test_data)
+
+# Get residuals for the test data
+test_residuals_2 <- test_data$GARAN - test_predictions_2
+
+# Create a data frame for plotting
+plot_data <- data.frame(timestamp = new_format_timestamp[(split_index + 1):nrow(reshaped_data)], residuals = test_residuals_2)
+
+# Plotting the residuals for the test data with control limits
+# Create a ggplot
+ggplot(plot_data, aes(x = timestamp, y = residuals)) +
+  geom_line() +
+  labs(x = "Timestamp", y = "Residuals", title = "Residuals Plot with Control Limits") +
+  geom_hline(yintercept = c(upper_limit, lower_limit), linetype = "dashed", color = c("red", "blue")) +
+  scale_x_datetime(date_breaks = "1 month", date_labels = "%b %Y") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  annotate("text", x = as.POSIXct(max(plot_data$timestamp)), y = upper_limit, label = "Upper Limit", hjust = 1.1, color = "red") +
+  annotate("text", x = as.POSIXct(max(plot_data$timestamp)), y = lower_limit, label = "Lower Limit", hjust = 1.1, color = "blue") +
+  theme(legend.position = "bottom") +
+  guides(col = guide_legend(title = "Control Limits"))
+```
+
+There are almost significant residual in test data, which means there is no significant movement between the pairs. 
+
+
+```{r}
+trade_list <- list()
+initial_capital <- 1000000
+# Apply trading simulation for the second pair
+for (i in 1:length(residuals_2)) {
+  execute_trades(reshaped_data$timestamp[i], reshaped_data$GARAN[i], reshaped_data$AKBNK[i], residuals_2[i], upper_limit_2, lower_limit_2)
+}
+
+# Create the data frame from the list for the second pair
+trades_df2 <- as.data.frame(do.call(rbind, trade_list))
+colnames(trades_df2) <- c("Timestamp", "GARAN", "AKBNK", "Action", "CapitalChange")
+trades_df2 <- subset(trades_df2, Action != "HOLD")
+final_capital_2 <- initial_capital
+final_capital_2
+```
+
+Again in the output, the points exceeding the control limits coincide
+with the intervals that we visually indicate as residuals using the
+Control chart graphs. The initial capital of 1000000 becomes 1001047 as
+a result of Pairs Trading Strategy. 
+
+The reason for this result, might be over fitting the data. We will further explore the data using the correlation in part 2.
+
+
+**Part 2**
+
+In order to enhance pairs trading strategy by incorporating more
+advanced time series analysis methods for modeling the residuals of
+selected stock pairs, autoregressive integrated moving average (ARIMA)
+models is implemented to residuals. Since time series models can help
+capture patterns, trends, or auto correlations in the residuals that may
+not be fully addressed by a basic linear regression model, it is
+expected to get a better results in terms of the profitability of pairs
+trading strategy. After applying ARIMA model to the difference in stock prices, results
+are used to redefine the control limits.
+
+```{r}
+#TASK 2
+
+#For the pair KCHOL and THYAO:
+
+library(ggplot2)
+library(forecast)  # for ARIMA modeling and forecasts
+
+
+# Function to fit ARIMA model to residuals and calculate new control limits
+fit_arima_model <- function(data) {
+  # Fit ARIMA model
+  arima_model <- auto.arima(data)  # Adjust order as needed
+  # Extract residuals from the ARIMA model
+  arima_residuals <- residuals(arima_model)
+  
+  # Calculate upper and lower control limits (e.g., 3 standard deviations from mean)
+  upper_limit <- mean(arima_residuals) + 3 * sd(arima_residuals)
+  lower_limit <- mean(arima_residuals) - 3 * sd(arima_residuals)
+  
+  return(list(arima_model = arima_model, upper_limit = upper_limit, lower_limit = lower_limit))
+}
+
+```
+
+In this part, we changed our approach. Since we picked the most correlated, the prices are expected to follow the same trend in their prices. More specifically, their standart deviation, therefore deviation amount from their mean should be close to each other. Hence, their stock price difference should be consistent in a particular time period. Using autocorrelation function to find a trend between their consequtive stock price differences, we are expected to find more explainatory results compared to simple linear regression.
+
+```{r}
+
+
+# Finding their stock price difference
+dif_train_1 = train_data$KCHOL - train_data$THYAO
+
+# Extract the vector of data and convert it into time series
+data_train_1 <- as.vector(dif_train_1)
+start_date <- as.POSIXct("2018-01-02 09:00:00", tz = "UTC")
+ts_train_data = ts(data_train_1, start = start_date, frequency = 10)
+ts_arima_results_1 = fit_arima_model(ts_train_data)
+
+
+# Extract ARIMA model and new control limits
+ts_arima_model_1 <- ts_arima_results_1$arima_model
+ts_upper_limit_arima_1 <- ts_arima_results_1$upper_limit
+ts_lower_limit_arima_1 <- ts_arima_results_1$lower_limit
+
+plot_data_arima1 <- data.frame(
+  timestamp = new_format_timestamp[1:split_index],
+  residuals = ts_arima_results_1$arima_model$residuals,
+  upper_limit_arima = ts_upper_limit_arima_1,
+  lower_limit_arima = ts_lower_limit_arima_1
+)
+
+ggplot(plot_data_arima1, aes(x = timestamp, y = residuals)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = ts_lower_limit_arima_1, ymax = ts_upper_limit_arima_1), fill = "red", alpha = 0.3, color = NA) +
+  labs(x = "Timestamp", y = "Residuals", title = "Comparative Control Limits") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_fill_manual(values = c("red"), name = "Limits", labels = c("Basic (Blue)", "ARIMA (Red)")) +
+  guides(fill = guide_legend(title = NULL))
+
+
+```
+
+As it can be seen from the control chart of "KCHOL" and "THYAO", control
+limits becomes narrower compared to those derived from previous model.
+This narrowing of control limits can be a result of the ARIMA model
+capturing and incorporating the temporal dependencies or patterns
+present in our data. Moreover, in Task 1, variance is assumed constant.
+The incorporation of autoregressive (AR) and moving average (MA)
+components in the ARIMA model can lead to a reduction in the overall
+variability of the residuals. This reduction may result in narrower
+control limits, reflecting a more precise estimation of the expected
+range of values.
+
+Pair trading strategy is applied to revised control limits.
+
+```{r}
+
+dif_test_1 = test_data$KCHOL - test_data$THYAO
+data_test_1 <- as.vector(dif_test_1)
+start_date <- as.POSIXct("2022-09-02 09:00:00", tz = "UTC")
+ts_test_data = ts(data_test_1, start = start_date, frequency = 10)
+arima_test_results_1 = fit_arima_model(ts_test_data)
+
+
+plot_data_arima1 <- data.frame(
+  timestamp = new_format_timestamp[(split_index+1):length(new_format_timestamp)],
+  residuals = arima_test_results_1$arima_model$residuals,
+  upper_limit_arima = ts_upper_limit_arima_1,
+  lower_limit_arima = ts_lower_limit_arima_1
+)
+
+ggplot(plot_data_arima1, aes(x = timestamp, y = residuals)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = ts_lower_limit_arima_1, ymax = ts_upper_limit_arima_1), fill = "red", alpha = 0.3, color = NA) +
+  labs(x = "Timestamp", y = "Residuals", title = "Comparative Control Limits") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_fill_manual(values = c("red"), name = "Limits", labels = c("Basic (Blue)", "ARIMA (Red)")) +
+  guides(fill = guide_legend(title = NULL))
+```
+As expected, more residuals beyond control limits are detected hence more trading decisions are can be made. Reason behind this decreased control limits is that the trend and moving average are captured. It is now easier to identify the outliers.
+
+
+
+```{r}
+#Corresponding arima function for the arima model
+arima_forecast = function(Yt, Yt_1, Yt_2, Yt_10, phi1, Phi1){
+  forecast_value <- Yt - 2 * Yt_1 + Yt_2 - phi1 * (Yt - Yt_1) + Phi1 * (Yt - Yt_10)
+  return(forecast_value)
+}
+```
+
+This is the arima prediction model suggested by auto.arima
+
+```{r}
+trade_list <- list()
+initial_capital <- 1000000
+new_set = dif_train_1
+starting_set = new_set[(length(new_set)-10) : length(new_set)]
+
+#non-seasonal coefficient
+coef1 = ts_arima_model_1$coef[[1]]
+
+#seasonal coefficient
+coef2 = ts_arima_model_1$coef[[2]]
+
+
+for (i in 1:length(test_residuals_1)) {
+  arima_pred <- arima_forecast(starting_set[i+10], starting_set[i+9], starting_set[i+8],starting_set[i],coef1,coef2)
+  actual_residual <- dif_test_1[i] - arima_pred
+  execute_trades(test_data$timestamp[i], test_data$KCHOL[i], test_data$THYAO[i], actual_residual, ts_upper_limit_arima_1, ts_lower_limit_arima_1)
+  # Update new_set with the predicted value
+  starting_set <- c(starting_set, dif_test_1[i])
+}
+
+# Create the data frame from the list for the second pair
+trades_dfar1 <- as.data.frame(do.call(rbind, trade_list))
+colnames(trades_dfar1) <- c("Timestamp", "KCHOL", "THYAO", "Action", "CapitalChange")
+trades_dfar1 <- subset(trades_dfar1, Action != "HOLD")
+final_capital_arima1 <- initial_capital
+final_capital_arima1
+```
+ The initial capital of 1000000 becomes
+1205310 as a result of Pairs Trading Strategy which is higher than the
+result ( 1124038 )in Task 1. We can say that the noise is captured better in this model.
+
+
+
+
+Secondly, pair of "GARAN" or "AKBNK" are examined:
+
+```{r}
+
+# Apply ARIMA model and redefine control limits for the second pair
+dif_train_2 = train_data$GARAN - train_data$AKBNK
+arima_results_2 <- fit_arima_model(dif_train_2)
+
+
+# Extract the vector of data
+data_train_2 <- as.vector(dif_train_2)
+start_date <- as.POSIXct("2018-01-02 09:00:00", tz = "UTC")
+ts_train_data_2 = ts(data_train_2, start = start_date, frequency = 10)
+ts_arima_results_2 = fit_arima_model(ts_train_data_2)
+
+
+# Extract ARIMA model and new control limits
+ts_arima_model_2 <- ts_arima_results_2$arima_model
+ts_upper_limit_arima_2 <- ts_arima_results_2$upper_limit
+ts_lower_limit_arima_2 <- ts_arima_results_2$lower_limit
+
+#### Create a data frame for plotting using 95% prediction interval
+plot_data_arima2 <- data.frame(
+  timestamp = new_format_timestamp[1:split_index],
+  residuals = ts_arima_model_2$residuals,
+  upper_limit_arima_2 = ts_upper_limit_arima_2,
+  lower_limit_arima_2 = ts_lower_limit_arima_2
+)
+
+
+ggplot(plot_data_arima2, aes(x = timestamp, y = residuals)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lower_limit, ymax = upper_limit), fill = "blue", alpha = 0.3, color = NA) +
+  geom_ribbon(aes(ymin = lower_limit_arima_2, ymax = upper_limit_arima_2), fill = "red", alpha = 0.3, color = NA) +
+  labs(x = "Timestamp", y = "Residuals", title = "Comparative Control Limits") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_fill_manual(values = c("blue", "red"), name = "Limits", labels = c("Basic (Blue)", "ARIMA (Red)")) +
+  guides(fill = guide_legend(title = NULL))
+
+```
+
+Both the upper and lower limits that the arima suggested is much more lower than the linear model suggested. Also the the residuals are relatively small. We can see that the number of outliers in the training data increased.
+
+```{r}
+
+ggplot(plot_data_arima2, aes(x = timestamp, y = residuals)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lower_limit_arima_2, ymax = upper_limit_arima_2), fill = "red", alpha = 0.3, color = NA) +
+  labs(x = "Timestamp", y = "Residuals", title = "Comparative Control Limits") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_fill_manual(values = c("blue", "red"), name = "Limits", labels = c("Basic (Blue)", "ARIMA (Red)")) +
+  guides(fill = guide_legend(title = NULL))
+
+```
+
+The same procedure is followed to implement the pairs trading strategy
+
+```{r}
+
+
+
+dif_test_2= test_data$GARAN - test_data$AKBNK
+data_test_2 <- as.vector(dif_test_2)
+start_date <- as.POSIXct("2022-09-02 09:00:00", tz = "UTC")
+ts_test_data_2 = ts(data_test_2, start = start_date, frequency = 10)
+arima_test_results_2 = fit_arima_model(ts_test_data_2)
+
+#plot the test residuals
+plot_data_arima1 <- data.frame(
+  timestamp = new_format_timestamp[(split_index+1):length(new_format_timestamp)],
+  residuals = arima_test_results_2$arima_model$residuals,
+  upper_limit_arima = ts_upper_limit_arima_2,
+  lower_limit_arima = ts_lower_limit_arima_2
+)
+
+ggplot(plot_data_arima1, aes(x = timestamp, y = residuals)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = ts_lower_limit_arima_1, ymax = ts_upper_limit_arima_1), fill = "red", alpha = 0.3, color = NA) +
+  labs(x = "Timestamp", y = "Residuals", title = "Comparative Control Limits") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_fill_manual(values = c("red"), name = "Limits", labels = c("Basic (Blue)", "ARIMA (Red)")) +
+  guides(fill = guide_legend(title = NULL))
+
+```
+It is possible to see that arima suggests more trading decisions compared to linear model. Again, the reason is that the arima captures the trend between the data and idetify the outliers better.
+
+```{r}
+
+summary(ts_arima_model_2)
+
+#Corresponding arima function for the arima model. ARIMA(0,1,0)(2,0,1)[10] 
+arima_forecast = function(Yt, Yt_1, Y_t1_f, Yt_10, Yt_20, phi1, phi2, Phi1){
+  forecast_value <- Yt + phi1 * (Yt_10 - Yt) +  phi2 * (Yt_20 - Yt_10) + Phi1 * (Yt_1 - Y_t1_f)
+  return(forecast_value)
+}
+```
+
+
+```{r}
+
+trade_list <- list()
+initial_capital <- 1000000
+new_set_2 = dif_test_2
+starting_set_2 = new_set_2[(length(new_set_2)-20) : length(new_set_2)]
+
+
+#seasonal coefficients
+coef2_1 = ts_arima_model_2$coef[[1]]
+coef2_2 = ts_arima_model_2$coef[[2]]
+
+#non-seasonal coefficient
+coef2_3 = ts_arima_model_2$coef[[3]]
+
+#Approximate values for forecast for the first two prediction values
+prediction_set = starting_set_2[(length(starting_set_2)-1) : length(starting_set_2)]
+actual_res = c()
+
+
+for (i in 1:length(test_residuals_2)) {
+
+  arima_pred <- arima_forecast(starting_set_2[i+20], starting_set_2[i+19], prediction_set[i], starting_set_2[i+10],starting_set_2[i],coef2_1,coef2_2, coef2_3)
+  actual_residual <- dif_test_2[i] - arima_pred
+  execute_trades(test_data$timestamp[i], test_data$GARAN[i], test_data$AKBNK[i], actual_residual, ts_upper_limit_arima_2, ts_lower_limit_arima_2)
+  # Update new_set with the predicted value
+  starting_set_2 <- c(starting_set_2, dif_test_2[i])
+  prediction_set = c(prediction_set, arima_pred)
+  actual_res = c(actual_res,actual_residual)
+}
+
+
+
+# Create the data frame from the list for the second pair
+trades_dfar2 <- as.data.frame(do.call(rbind, trade_list))
+colnames(trades_dfar2) <- c("Timestamp", "GARAN", "AKBNK", "Action", "CapitalChange")
+trades_dfar2 <- subset(trades_dfar2, Action != "HOLD")
+final_capital_arima2 <- initial_capital
+final_capital_arima2
+
+
+
+
+
+#plot the test residuals
+plot_data_arima1 <- data.frame(
+  timestamp = new_format_timestamp[(split_index+1):length(new_format_timestamp)],
+  residuals = actual_res,
+  upper_limit_arima = ts_upper_limit_arima_2,
+  lower_limit_arima = ts_lower_limit_arima_2
+)
+
+ggplot(plot_data_arima1, aes(x = timestamp, y = residuals)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = ts_lower_limit_arima_1, ymax = ts_upper_limit_arima_1), fill = "red", alpha = 0.3, color = NA) +
+  labs(x = "Timestamp", y = "Residuals", title = "Comparative Control Limits") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_fill_manual(values = c("red"), name = "Limits", labels = c("Basic (Blue)", "ARIMA (Red)")) +
+  guides(fill = guide_legend(title = NULL))
+
+```
+
+As in the previous stock pairs, more residuals beyond control limits are
+detected hence more trading decisions are made. The initial capital of
+1000000 becomes 999188 as a result of Pairs Trading Strategy which is
+higher than the result ( 1001047 )in Task 1.
+
+
+**Conclusion**
+
+Although, Pairs Trading Strategy seems logical and profitable, basic strategy such as simple linear regression on data is not enough to gain significant benefit or even gain any benefit from this strategy. Creating confidence intervals using high standart deviations and means which are obtained using linear regression gives us a small space to trade and earn profit, because most of the time the process is observed between control limits. Therefore, based on findings, our first impression on Pairs Trading is worse than expected. Using linear regression to trade end up in earning 12% of initial assets in first pair, and gainin only 0.1% of inital assets in the second pair. 12% profit seems to be an acceptable profit whereas 0.1% is probebly washed away by inflation.
+
+Secondly, to improve our results and understand the data better, we used auto regression and moving average to explain the relative price changes in stock pairs gives us smaller standart deviations and means, indicating our process is more out of control than we first guessed. Small standart deviation in this case shows us the second model fits the data which is used in second case better than the model used in the first case. Accordingly, using a better fitting model, ARIMA in our case, instead of linear regression led to an increase in the initial assets by 20% whereas using linear regression resulted in losing 10% of the initial assets in the first case. For the second case, using ARIMA decreased our earnings from 0.1% to -0.9%. 
+
+Unfortunately, 0.1% is not a significant profit at a time scale of 2 years. Probably buying government bonds is more profitable than this strategy. 20% on the other hand, might be an acceptable profit depending on the interest rates. This analysis shows us, more comprehensive strategy of the data might let us gain more profit from this trading strategy. Also, there is a downside of this strategy. This strategy will fail, when a company crush is occured in selected stocks. A lot of money, will pour into crushed company due to its low price. 
+
+
